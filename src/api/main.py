@@ -1,6 +1,9 @@
-"""FastAPI application exposing endpoints for personas, segmentation, experiments, and predictions."""
+"""FastAPI application exposing endpoints for personas, segmentation, experiments, predictions, and a simple web UI."""
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from src.api.ui import app as ui_app
+
+from fastapi import HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
@@ -9,7 +12,10 @@ from src.personas.persona_generator import PersonaGenerator
 from src.experiments.ab_testing import ExperimentDesigner
 from src.models.customer_persona import CustomerPersona
 
-app = FastAPI(title="Gas Station ML API", version="0.1.0")
+app = FastAPI(title="Gas Station ML API", version="0.2.0")
+
+# Mount UI sub-app at root
+app.mount("/", ui_app)
 
 # In-memory stores (for demo)
 personas_store: Dict[str, Dict[str, Any]] = {}
