@@ -15,26 +15,16 @@ jobs:
       - name: Install SSH client
         run: sudo apt-get update && sudo apt-get install -y openssh-client
 
-      - name: Add SSH key (if using key auth)
-        if: ${{ secrets.SSH_PRIVATE_KEY != '' }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Copy repository to server and deploy (Docker Compose)
+      - name: Deploy via SSH using password (Docker Compose)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             set -e
             export APP_DIR="${{ secrets.APP_DIR }}"
-            export DOCKER_COMPOSE="${{ secrets.DOCKER_COMPOSE }}"
             export REPO_URL="https://github.com/AleksandrSotnikov/gas-station-ML.git"
 
             echo ">>> [1/4] Ensure system dependencies"
@@ -42,7 +32,6 @@ jobs:
             apt-get install -y git ca-certificates curl gnupg
 
             if ! command -v docker >/dev/null 2>&1; then
-              # Install Docker
               install -m 0755 -d /etc/apt/keyrings
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
               chmod a+r /etc/apt/keyrings/docker.gpg
