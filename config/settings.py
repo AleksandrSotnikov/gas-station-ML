@@ -45,7 +45,7 @@ ML_CONFIG = {
 
 # Customer persona settings
 PERSONA_CONFIG = {
-    "min_cluster_size": 20,  # lowered from 50 to generate personas on smaller datasets
+    "min_cluster_size": 10,  # lowered from 20 to 10 for small datasets
     "max_personas": 10,
     "behavioral_features": [
         "visit_frequency",
