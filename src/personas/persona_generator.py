@@ -29,6 +29,7 @@ class PersonaGenerator:
         self.scaler = MinMaxScaler()
         self.personas = []
         self.cluster_profiles = None
+        self._used_names = set()  # Track used names to prevent duplication
         
     def generate_from_clusters(
         self, 
@@ -48,6 +49,9 @@ class PersonaGenerator:
         """
         logger.info("Starting persona generation from clusters")
         
+        # Reset used names for new generation
+        self._used_names = set()
+        
         # Determine number of personas
         unique_clusters = np.unique(cluster_labels[cluster_labels != -1])  # Exclude noise
         if n_personas is None:
@@ -55,14 +59,14 @@ class PersonaGenerator:
         
         logger.info(f"Generating {n_personas} personas from {len(unique_clusters)} clusters")
         
-        # Create cluster profiles
+        # Create cluster profiles - fix for numeric columns only
         self.cluster_profiles = self._create_cluster_profiles(cluster_data, cluster_labels)
         
         # Generate personas for each significant cluster
         personas = []
-        for cluster_id in unique_clusters[:n_personas]:
+        for i, cluster_id in enumerate(unique_clusters[:n_personas]):
             if self._is_cluster_significant(cluster_id):
-                persona = self._create_persona_from_cluster(cluster_id)
+                persona = self._create_persona_from_cluster(cluster_id, i)
                 if persona:
                     personas.append(persona)
         
@@ -87,11 +91,23 @@ class PersonaGenerator:
         data_with_clusters = data.copy()
         data_with_clusters['cluster'] = labels
         
-        # Calculate cluster statistics
-        profiles = data_with_clusters.groupby('cluster').agg({
+        # Use only numeric columns to avoid conversion errors
+        numeric_cols = data_with_clusters.select_dtypes(include=[np.number]).columns.tolist()
+        numeric_cols = [col for col in numeric_cols if col != 'cluster']
+        
+        if not numeric_cols:
+            logger.warning("No numeric columns found, using all columns")
+            numeric_cols = [col for col in data.columns if col != 'cluster']
+        
+        # Calculate cluster statistics for numeric columns only
+        profiles = data_with_clusters.groupby('cluster')[numeric_cols].agg({
             col: ['mean', 'std', 'median', 'min', 'max', 'count'] 
-            for col in data.columns if col != 'cluster'
+            for col in numeric_cols
         }).round(3)
+        
+        # Add cluster sizes as separate column for easier access
+        cluster_sizes = data_with_clusters.groupby('cluster').size()
+        profiles[('meta', 'cluster_size')] = cluster_sizes
         
         return profiles
     
@@ -108,17 +124,23 @@ class PersonaGenerator:
             return False
             
         try:
-            # Get cluster size from any feature's count
-            cluster_size = self.cluster_profiles.loc[cluster_id].iloc[0]['count']
+            # Get cluster size from meta column or first feature's count
+            if ('meta', 'cluster_size') in self.cluster_profiles.columns:
+                cluster_size = int(self.cluster_profiles.loc[cluster_id][('meta', 'cluster_size')])
+            else:
+                # Fallback to first column's count if meta not available
+                cluster_size = int(self.cluster_profiles.loc[cluster_id].iloc[0]['count'])
             return cluster_size >= self.config["min_cluster_size"]
-        except (KeyError, IndexError):
+        except (KeyError, IndexError, TypeError) as e:
+            logger.warning(f"Could not determine cluster size for cluster {cluster_id}: {e}")
             return False
     
-    def _create_persona_from_cluster(self, cluster_id: int) -> Optional[CustomerPersona]:
+    def _create_persona_from_cluster(self, cluster_id: int, persona_index: int = 0) -> Optional[CustomerPersona]:
         """Create a persona from cluster statistics.
         
         Args:
             cluster_id: Cluster identifier
+            persona_index: Index for unique name generation
             
         Returns:
             Generated customer persona or None if creation fails
@@ -126,9 +148,9 @@ class PersonaGenerator:
         try:
             cluster_stats = self.cluster_profiles.loc[cluster_id]
             
-            # Generate basic info
+            # Generate basic info with unique naming
             persona_id = str(uuid.uuid4())
-            name = self._generate_persona_name(cluster_id)
+            name = self._generate_persona_name(cluster_id, persona_index)
             description = self._generate_persona_description(cluster_id, cluster_stats)
             
             # Generate behavioral attributes
@@ -140,8 +162,15 @@ class PersonaGenerator:
             # Generate decision rules
             decision_rules = self._generate_decision_rules(cluster_stats)
             
-            # Get cluster size
-            segment_size = int(cluster_stats.iloc[0]['count'])
+            # Get cluster size - improved error handling
+            try:
+                if ('meta', 'cluster_size') in self.cluster_profiles.columns:
+                    segment_size = int(cluster_stats[('meta', 'cluster_size')])
+                else:
+                    # Fallback to first column's count
+                    segment_size = int(cluster_stats.iloc[0]['count'])
+            except (KeyError, IndexError, TypeError):
+                segment_size = 100  # Default fallback size
             
             # Calculate confidence score
             confidence_score = self._calculate_confidence_score(cluster_stats)
@@ -158,7 +187,7 @@ class PersonaGenerator:
                 confidence_score=confidence_score,
                 created_at=datetime.now().isoformat(),
                 updated_at=datetime.now().isoformat(),
-                metadata={'cluster_id': cluster_id}
+                metadata={'cluster_id': cluster_id, 'persona_index': persona_index}
             )
             
             logger.info(f"Created persona '{name}' from cluster {cluster_id}")
@@ -168,17 +197,18 @@ class PersonaGenerator:
             logger.error(f"Failed to create persona from cluster {cluster_id}: {e}")
             return None
     
-    def _generate_persona_name(self, cluster_id: int) -> str:
-        """Generate a descriptive name for the persona.
+    def _generate_persona_name(self, cluster_id: int, persona_index: int = 0) -> str:
+        """Generate a descriptive name for the persona with uniqueness check.
         
         Args:
             cluster_id: Cluster identifier
+            persona_index: Index for unique name generation
             
         Returns:
-            Generated persona name
+            Generated unique persona name
         """
-        # Simplified naming scheme based on cluster characteristics
-        names = [
+        # Base names for personas
+        base_names = [
             "Постоянный клиент",
             "Экономный покупатель", 
             "Премиум клиент",
@@ -191,10 +221,23 @@ class PersonaGenerator:
             "Местные жители"
         ]
         
-        if cluster_id < len(names):
-            return names[cluster_id]
+        # Determine base name
+        if persona_index < len(base_names):
+            base_name = base_names[persona_index]
         else:
-            return f"Сегмент {cluster_id + 1}"
+            base_name = f"Сегмент {persona_index + 1}"
+        
+        # Ensure uniqueness
+        unique_name = base_name
+        counter = 1
+        while unique_name in self._used_names:
+            unique_name = f"{base_name} {counter}"
+            counter += 1
+        
+        # Track used name
+        self._used_names.add(unique_name)
+        
+        return unique_name
     
     def _generate_persona_description(
         self, 
@@ -211,15 +254,22 @@ class PersonaGenerator:
             Generated description
         """
         try:
-            # Extract key characteristics (this would be customized based on actual features)
-            size = int(cluster_stats.iloc[0]['count'])
+            # Extract key characteristics with improved error handling
+            try:
+                if ('meta', 'cluster_size') in cluster_stats.index:
+                    size = int(cluster_stats[('meta', 'cluster_size')])
+                else:
+                    size = int(cluster_stats.iloc[0]['count'])
+            except (KeyError, IndexError, TypeError):
+                size = 100  # Default size
             
             description = f"Клиентский сегмент #{cluster_id + 1}, включающий {size} клиентов. "
             description += "Характеризуется определенными поведенческими паттернами "
             description += "и предпочтениями в выборе топлива и дополнительных услуг."
             
             return description
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error generating description for cluster {cluster_id}: {e}")
             return f"Клиентский сегмент #{cluster_id + 1}"
     
     def _generate_behavioral_attributes(
@@ -385,7 +435,14 @@ class PersonaGenerator:
         """
         try:
             # Base confidence on cluster size and stability
-            cluster_size = cluster_stats.iloc[0]['count']
+            try:
+                if ('meta', 'cluster_size') in cluster_stats.index:
+                    cluster_size = cluster_stats[('meta', 'cluster_size')]
+                else:
+                    cluster_size = cluster_stats.iloc[0]['count']
+                cluster_size = float(cluster_size)
+            except (KeyError, IndexError, TypeError):
+                cluster_size = 100.0  # Default size
             
             # Normalize cluster size
             size_score = min(1.0, cluster_size / 1000.0)
@@ -398,7 +455,8 @@ class PersonaGenerator:
             
             return min(1.0, max(0.3, confidence))  # Clamp between 0.3 and 1.0
             
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error calculating confidence score: {e}")
             return 0.5  # Default confidence
     
     def validate_persona_consistency(self, persona: CustomerPersona) -> Dict[str, Any]:
