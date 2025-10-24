@@ -61,6 +61,84 @@ gas-station-ML/
 └── README.md             # Этот файл
 ```
 
+## 🚀 Деплой и запуск
+
+### Локально (Docker Compose)
+```bash
+docker compose up --build
+# Swagger: http://127.0.0.1:8000/docs
+```
+
+### Локально (без Docker)
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+bash run_api.sh
+```
+
+### Продакшен (CI/CD → сервер Ubuntu 24)
+Автодеплой при push в main:
+- Устанавливает Docker и Compose при отсутствии
+- Клонирует/обновляет репозиторий на сервере
+- Запускает `docker compose up --build -d`
+- API по умолчанию доступен на: http://185.221.199.232:8000
+
+## 📊 Примеры API-запросов
+
+### 1) Кластеризация K-Means
+```bash
+curl -X POST http://185.221.199.232:8000/api/v1/segmentation/kmeans \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": [
+      {"visits_per_month": 7.2, "avg_ticket": 1900, "fuel_regular_share": 0.7, "fuel_diesel_share": 0.2, "services_shop": 0.5, "services_cafe": 0.2},
+      {"visits_per_month": 3.1, "avg_ticket": 1400, "fuel_regular_share": 0.3, "fuel_diesel_share": 0.5, "services_shop": 0.2, "services_cafe": 0.1}
+    ],
+    "features": ["visits_per_month","avg_ticket","fuel_regular_share","fuel_diesel_share","services_shop","services_cafe"],
+    "n_clusters": 3
+  }'
+```
+
+### 2) Генерация портретов из кластеров
+```bash
+curl -X POST http://185.221.199.232:8000/api/v1/personas/from-clusters \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": [
+      {"visits_per_month": 7.2, "avg_ticket": 1900, "fuel_regular_share": 0.7, "fuel_diesel_share": 0.2, "services_shop": 0.5, "services_cafe": 0.2},
+      {"visits_per_month": 3.1, "avg_ticket": 1400, "fuel_regular_share": 0.3, "fuel_diesel_share": 0.5, "services_shop": 0.2, "services_cafe": 0.1}
+    ],
+    "labels": [0,1],
+    "n_personas": 2
+  }'
+```
+
+### 3) Получить портрет по id
+```bash
+curl http://185.221.199.232:8000/api/v1/personas/<persona_id>
+```
+
+### 4) Спроектировать A/B тест
+```bash
+curl -X POST http://185.221.199.232:8000/api/v1/experiments/design \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Перс. рекомендации",
+    "description": "Рекомендации на кассе",
+    "target_metric": "conversion_rate",
+    "expected_effect_size": 0.07,
+    "affected_personas": ["<persona_id_1>", "<persona_id_2>"],
+    "feature_description": "UI-карточки рекомендаций",
+    "business_context": "Повышение конверсии"
+  }'
+```
+
+### 5) Симулировать эксперимент
+```bash
+curl -X POST http://185.221.199.232:8000/api/v1/experiments/<experiment_id>/simulate
+```
+
 ## 🎯 Ожидаемые результаты
 
 1. **Набор портретов клиентов** с поведенческими признаками и правилами реакции
@@ -94,29 +172,14 @@ gas-station-ML/
 - Стабильность моделей
 - Точность распознания портретов
 
-## 🚀 Быстрый старт
-
+## 🧪 Тестирование
 ```bash
-# Клонирование репозитория
-git clone https://github.com/AleksandrSotnikov/gas-station-ML.git
-cd gas-station-ML
-
-# Установка зависимостей
-pip install -r requirements.txt
-
-# Запуск jupyter notebook для исследования
-jupyter notebook notebooks/
+pytest -v tests/
 ```
 
 ## 📝 Лицензия
 
 MIT License
-
-## 👥 Команда разработки
-
-- Разработка ML моделей
-- Дизайн экспериментов
-- Валидация подходов
 
 ---
 
